@@ -1,35 +1,51 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  BODY,
+  BRASS,
+  BRASS_DARK,
+  BRASS_LIGHT,
+  CREAM,
+  DISPLAY,
+  ERA_THEME,
+  INK,
+  PLAYER_COLORS,
+  SOOT,
+  SOOT_DEEP,
+  brassPlate,
+  colorOf,
+  engraved,
+  parchment,
+} from "./theme.js";
+import {
+  BackIcon,
+  BarrelIcon,
+  CanalIcon,
+  CloseIcon,
+  CogIcon,
+  FactoryIcon,
+  LedgerIcon,
+  PlusIcon,
+  RailIcon,
+  TopHatIcon,
+  UndoIcon,
+  WreathIcon,
+} from "./icons.jsx";
+import { GlobalStyles, RollingNumber, WaxSeal } from "./ornaments.jsx";
 
-/* ─────────────────────────── Constants ─────────────────────────── */
-
-const GOLD = "#c9a84c";
-const CREAM = "#f5e6c8";
-const FONT = "'Georgia', 'Times New Roman', serif";
-
-const PLAYER_COLORS = [
-  { id: "red",    name: "Red",    bg: "#4a1a1a", accent: "#d94f3a" },
-  { id: "blue",   name: "Blue",   bg: "#1a2a4a", accent: "#5b9bd5" },
-  { id: "green",  name: "Green",  bg: "#1a3a2a", accent: "#4aad6f" },
-  { id: "yellow", name: "Yellow", bg: "#3a3212", accent: "#e8c547" },
-  { id: "purple", name: "Purple", bg: "#2e1a46", accent: "#a77ad9" },
-  { id: "teal",   name: "Teal",   bg: "#123838", accent: "#3fb8b0" },
-  { id: "white",  name: "White",  bg: "#2b2a27", accent: "#e6e0d2" },
-  { id: "black",  name: "Black",  bg: "#141414", accent: "#9a9a9a" },
-];
-
-const colorOf = (colorId) =>
-  PLAYER_COLORS.find((c) => c.id === colorId) ?? PLAYER_COLORS[0];
+/* ─────────────────────────── Game data ─────────────────────────── */
 
 const MERCHANT_BONUSES = [
-  { id: "m3a", label: "3 VP", vp: 3 },
-  { id: "m3b", label: "3 VP", vp: 3 },
-  { id: "m4",  label: "4 VP", vp: 4 },
+  { id: "m3a", vp: 3 },
+  { id: "m3b", vp: 3 },
+  { id: "m4", vp: 4 },
 ];
 
-const PHASE_LABELS = { canal: "Canal Era", rail: "Rail Era", final: "Final Score" };
 const ERAS = ["canal", "rail"];
+const PHASES = ["canal", "rail", "final"];
+const PHASE_ICON = { canal: CanalIcon, rail: RailIcon, final: WreathIcon };
 const MAX_PLAYERS = 4;
 const MIN_PLAYERS = 2;
+const MAX_UNDO = 100;
 
 const GAME_KEY = "brass.game.v1";
 const HISTORY_KEY = "brass.history.v1";
@@ -41,29 +57,21 @@ const newId = () => Math.random().toString(36).slice(2, 10) + Date.now().toStrin
 // links / tiles are lists of individual VP entries, e.g. tiles: [9, 4, 6]
 const defaultEra = () => ({ links: [], tiles: [], merchantBonuses: [] });
 
-const MAX_UNDO = 100;
-
-const emptyGame = () => ({
-  started: false,
-  players: [],
-  phase: "canal",
-  savedHistoryId: null,
-});
+const emptyGame = () => ({ started: false, players: [], phase: "canal", savedHistoryId: null });
 
 const sum = (list) => list.reduce((s, n) => s + n, 0);
 
-const eraVP = (era) =>
-  sum(era.links) +
-  sum(era.tiles) +
-  era.merchantBonuses.reduce(
-    (s, id) => s + (MERCHANT_BONUSES.find((b) => b.id === id)?.vp ?? 0),
-    0
-  );
+const merchantVP = (ids) => ids.reduce((s, id) => s + (MERCHANT_BONUSES.find((b) => b.id === id)?.vp ?? 0), 0);
+
+const eraVP = (era) => sum(era.links) + sum(era.tiles) + merchantVP(era.merchantBonuses);
 
 const totalVP = (p) => eraVP(p.canal) + eraVP(p.rail);
 
-const hasAnyScore = (players) =>
-  players.some((p) => totalVP(p) > 0);
+const hasAnyScore = (players) => players.some((p) => totalVP(p) > 0);
+
+const initialOf = (name) => (name.trim()[0] ?? "").toUpperCase();
+
+const nameKey = (name) => name.trim().toLowerCase();
 
 function loadJSON(key, fallback, isValid, migrate = (x) => x) {
   try {
@@ -95,8 +103,16 @@ function usePersistentState(key, fallback, isValid, migrate) {
 // Accepts both the current list format and the older single-number format.
 const isValidEntries = (v) => Number.isFinite(v) || (Array.isArray(v) && v.every(Number.isFinite));
 
-const isValidEra = (e) =>
-  e && isValidEntries(e.links) && isValidEntries(e.tiles) && Array.isArray(e.merchantBonuses);
+const isValidEra = (e) => e && isValidEntries(e.links) && isValidEntries(e.tiles) && Array.isArray(e.merchantBonuses);
+
+const isValidGame = (g) =>
+  g &&
+  typeof g === "object" &&
+  Array.isArray(g.players) &&
+  g.players.every((p) => p && p.id && typeof p.name === "string" && isValidEra(p.canal) && isValidEra(p.rail)) &&
+  PHASES.includes(g.phase);
+
+const isValidHistory = (h) => Array.isArray(h) && h.every((g) => g && g.id && Array.isArray(g.players));
 
 // Older saves stored one running number per row; turn it into a single entry.
 const toEntries = (v) => (Array.isArray(v) ? v : v > 0 ? [v] : []);
@@ -105,19 +121,11 @@ const migrateGame = (g) => ({
   ...g,
   players: g.players.map((p) => ({
     ...p,
+    colorId: PLAYER_COLORS.some((c) => c.id === p.colorId) ? p.colorId : PLAYER_COLORS[0].id,
     canal: { ...p.canal, links: toEntries(p.canal.links), tiles: toEntries(p.canal.tiles) },
     rail: { ...p.rail, links: toEntries(p.rail.links), tiles: toEntries(p.rail.tiles) },
   })),
 });
-
-const isValidGame = (g) =>
-  g &&
-  typeof g === "object" &&
-  Array.isArray(g.players) &&
-  g.players.every((p) => p && p.id && typeof p.name === "string" && isValidEra(p.canal) && isValidEra(p.rail)) &&
-  ["canal", "rail", "final"].includes(g.phase);
-
-const isValidHistory = (h) => Array.isArray(h) && h.every((g) => g && g.id && Array.isArray(g.players));
 
 /** Ranks players by total; tied players share a rank. */
 function rankPlayers(players) {
@@ -126,181 +134,139 @@ function rankPlayers(players) {
   return sorted.map((p, i) => {
     if (i === 0 || p.total !== sorted[i - 1].total) rank = i;
     const tied =
-      (i > 0 && sorted[i - 1].total === p.total) ||
-      (i < sorted.length - 1 && sorted[i + 1].total === p.total);
+      (i > 0 && sorted[i - 1].total === p.total) || (i < sorted.length - 1 && sorted[i + 1].total === p.total);
     return { ...p, rank, tied };
   });
 }
 
 const formatDate = (iso) => {
   try {
-    return new Date(iso).toLocaleDateString(undefined, {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
+    return new Date(iso).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
   } catch {
     return iso;
   }
 };
 
-const nameKey = (name) => name.trim().toLowerCase();
+/* ─────────────────────────── Shared pieces ─────────────────────────── */
 
-/* ─────────────────────────── Shared styles ─────────────────────────── */
-
-const ghostButton = (extra = {}) => ({
-  background: "transparent",
-  border: "1px solid rgba(201,168,76,0.45)",
-  color: GOLD,
-  padding: "9px 14px",
-  fontSize: "11px",
-  letterSpacing: "2px",
-  textTransform: "uppercase",
-  cursor: "pointer",
-  fontFamily: FONT,
-  borderRadius: 3,
-  ...extra,
-});
-
-const solidButton = (extra = {}) => ({
-  background: "linear-gradient(135deg, #c9a84c, #a8862f)",
-  border: "1px solid #e0c370",
-  color: "#1a1208",
-  padding: "14px 20px",
-  fontSize: "13px",
-  letterSpacing: "3px",
-  textTransform: "uppercase",
-  fontWeight: "bold",
-  cursor: "pointer",
-  fontFamily: FONT,
-  borderRadius: 4,
-  width: "100%",
-  ...extra,
-});
-
-const panel = {
-  background: "rgba(0,0,0,0.55)",
-  border: "1px solid rgba(201,168,76,0.25)",
-  borderRadius: 6,
-  overflow: "hidden",
-};
-
-const sectionLabel = {
-  fontSize: "11px",
-  letterSpacing: "3px",
-  color: GOLD,
-  textTransform: "uppercase",
-};
-
-/* ─────────────────────────── Layout pieces ─────────────────────────── */
-
-function Header({ compact }) {
+function SootButton({ children, onClick, disabled, style, ariaLabel, type = "button" }) {
   return (
-    <div
+    <button
+      type={type}
+      className="press"
+      aria-label={ariaLabel}
+      onClick={onClick}
+      disabled={disabled}
       style={{
-        textAlign: "center",
-        padding: compact ? "18px 20px 12px" : "30px 20px 16px",
-        borderBottom: "1px solid rgba(201,168,76,0.3)",
-        background: "rgba(0,0,0,0.45)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        background: "rgba(0,0,0,0.38)",
+        border: "1px solid rgba(201,162,74,0.42)",
+        borderRadius: 6,
+        color: BRASS_LIGHT,
+        fontFamily: BODY,
+        fontSize: "16px",
+        padding: "10px 12px",
+        whiteSpace: "nowrap",
+        cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.35 : 1,
+        ...style,
       }}
     >
-      {!compact && (
-        <div style={{ fontSize: "10px", letterSpacing: "6px", color: GOLD, opacity: 0.75, marginBottom: 6, textTransform: "uppercase" }}>
-          The Industrial Age
-        </div>
-      )}
-      <h1
-        style={{
-          fontSize: compact ? "clamp(20px, 5vw, 32px)" : "clamp(24px, 6vw, 44px)",
-          fontWeight: "normal",
-          margin: "0 0 4px",
-          letterSpacing: "3px",
-          background: "linear-gradient(135deg, #f5e6c8, #c9a84c, #f5e6c8)",
-          WebkitBackgroundClip: "text",
-          WebkitTextFillColor: "transparent",
-          backgroundClip: "text",
-        }}
-      >
-        BRASS: BIRMINGHAM
-      </h1>
-      <div style={{ fontSize: "11px", letterSpacing: "4px", color: GOLD, opacity: 0.65, textTransform: "uppercase" }}>
-        Scoring Sheet
-      </div>
-      {!compact && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginTop: 12 }}>
-          <div style={{ flex: 1, maxWidth: 90, height: 1, background: "linear-gradient(to right, transparent, #c9a84c)" }} />
-          <div style={{ width: 6, height: 6, background: GOLD, transform: "rotate(45deg)" }} />
-          <div style={{ flex: 1, maxWidth: 90, height: 1, background: "linear-gradient(to left, transparent, #c9a84c)" }} />
-        </div>
-      )}
-    </div>
+      {children}
+    </button>
   );
 }
 
-function Shell({ compactHeader, children }) {
+function BrassButton({ children, onClick, disabled, style }) {
+  return (
+    <button
+      type="button"
+      className="press"
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        ...brassPlate("10px"),
+        ...engraved,
+        width: "100%",
+        border: `1px solid ${BRASS_DARK}`,
+        borderRadius: 6,
+        padding: "16px 28px",
+        fontFamily: DISPLAY,
+        fontWeight: 700,
+        fontSize: "19px",
+        cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.45 : 1,
+        ...style,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Header({ compact }) {
+  return (
+    <header style={{ textAlign: "center", padding: compact ? "18px 16px 8px" : "40px 16px 18px" }}>
+      <h1
+        style={{
+          fontFamily: DISPLAY,
+          fontWeight: 900,
+          fontSize: compact ? "clamp(26px, 7.5vw, 36px)" : "clamp(30px, 8.4vw, 54px)",
+          lineHeight: 1.05,
+          margin: 0,
+          background: "linear-gradient(180deg, #f6e2a6 0%, #d9b45c 45%, #a97f2e 70%, #e3c272 100%)",
+          WebkitBackgroundClip: "text",
+          WebkitTextFillColor: "transparent",
+          backgroundClip: "text",
+          filter: "drop-shadow(0 2px 0 rgba(0,0,0,0.6))",
+        }}
+      >
+        Brass: Birmingham
+      </h1>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginTop: compact ? 4 : 8 }}>
+        <span style={{ width: 44, height: 1, background: `linear-gradient(to right, transparent, ${BRASS})` }} />
+        <span style={{ fontFamily: BODY, fontStyle: "italic", fontSize: compact ? "15px" : "18px", color: `${BRASS}dd` }}>Scoring sheet</span>
+        <span style={{ width: 44, height: 1, background: `linear-gradient(to left, transparent, ${BRASS})` }} />
+      </div>
+    </header>
+  );
+}
+
+function Shell({ era = "final", compact, children }) {
+  const theme = ERA_THEME[era];
   return (
     <div
       style={{
         minHeight: "100vh",
-        background: "linear-gradient(160deg, #0d0a06 0%, #1a1208 40%, #0d0a06 100%)",
-        fontFamily: FONT,
+        background: `${theme.pattern}, radial-gradient(ellipse 120% 60% at 50% -10%, ${theme.glow}, transparent 70%), linear-gradient(180deg, ${SOOT} 0%, ${SOOT_DEEP} 100%)`,
+        fontFamily: BODY,
         color: CREAM,
       }}
     >
-      <div
-        style={{
-          position: "fixed",
-          inset: 0,
-          pointerEvents: "none",
-          backgroundImage: `
-            repeating-linear-gradient(45deg, transparent, transparent 40px, rgba(201,168,76,0.015) 40px, rgba(201,168,76,0.015) 41px),
-            repeating-linear-gradient(-45deg, transparent, transparent 40px, rgba(201,168,76,0.015) 40px, rgba(201,168,76,0.015) 41px)
-          `,
-        }}
-      />
-      <div style={{ position: "relative" }}>
-        <Header compact={compactHeader} />
-        <div style={{ maxWidth: 860, margin: "0 auto", padding: "18px 14px 60px" }}>{children}</div>
-      </div>
+      <GlobalStyles />
+      <Header compact={compact} />
+      <main style={{ maxWidth: 880, margin: "0 auto", padding: "8px 14px 64px" }}>{children}</main>
+    </div>
+  );
+}
+
+/** Dotted-leader ledger line: "Canal era ........ 34" */
+function LedgerLine({ label, value, strong, color = INK }) {
+  return (
+    <div style={{ display: "flex", alignItems: "baseline", gap: 8, padding: strong ? "10px 0 4px" : "7px 0" }}>
+      <span style={{ fontFamily: strong ? DISPLAY : BODY, fontWeight: strong ? 700 : 400, fontSize: strong ? "19px" : "18px" }}>{label}</span>
+      <span style={{ flex: 1, borderBottom: `2px dotted rgba(43,29,16,0.3)`, transform: "translateY(-4px)" }} />
+      <span style={{ fontFamily: DISPLAY, fontWeight: 900, fontSize: strong ? "28px" : "22px", color }}>
+        <RollingNumber value={value} />
+      </span>
     </div>
   );
 }
 
 /* ─────────────────────────── Setup screen ─────────────────────────── */
-
-function ColorPicker({ value, takenBy, onPick }) {
-  return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-      {PLAYER_COLORS.map((c) => {
-        const selected = c.id === value;
-        const taken = takenBy[c.id] && !selected;
-        return (
-          <button
-            key={c.id}
-            type="button"
-            aria-label={`${c.name}${taken ? " (taken)" : ""}`}
-            aria-pressed={selected}
-            disabled={taken}
-            onClick={() => onPick(c.id)}
-            style={{
-              width: 38,
-              height: 38,
-              borderRadius: "50%",
-              background: `radial-gradient(circle at 35% 30%, ${c.accent}, ${c.bg})`,
-              border: selected ? `3px solid ${CREAM}` : `2px solid ${c.accent}66`,
-              boxShadow: selected ? `0 0 12px ${c.accent}` : "none",
-              opacity: taken ? 0.18 : 1,
-              cursor: taken ? "default" : "pointer",
-              padding: 0,
-              flexShrink: 0,
-            }}
-          />
-        );
-      })}
-    </div>
-  );
-}
 
 function SetupScreen({ initialPlayers, mode, recentNames, canCancel, onCancel, onDone, onOpenHistory, historyCount }) {
   const firstFreeColor = (rows) =>
@@ -322,7 +288,6 @@ function SetupScreen({ initialPlayers, mode, recentNames, canCancel, onCancel, o
   }, [focusNewest, rows.length]);
 
   const takenBy = Object.fromEntries(rows.map((r) => [r.colorId, r.id]));
-
   const update = (id, patch) => setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
 
   const addPlayer = (name = "") => {
@@ -341,6 +306,7 @@ function SetupScreen({ initialPlayers, mode, recentNames, canCancel, onCancel, o
 
   const usedNames = new Set(rows.map((r) => nameKey(r.name)).filter(Boolean));
   const suggestions = recentNames.filter((n) => !usedNames.has(nameKey(n)));
+  const roomForName = rows.length < MAX_PLAYERS || rows.some((r) => !r.name.trim());
   const canStart = rows.length >= MIN_PLAYERS;
 
   const finish = () => {
@@ -349,124 +315,141 @@ function SetupScreen({ initialPlayers, mode, recentNames, canCancel, onCancel, o
   };
 
   return (
-    <Shell compactHeader={false}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 10 }}>
-        <span style={sectionLabel}>{mode === "edit" ? "Edit Players" : "Who's Playing?"}</span>
+    <Shell era="final" compact={false}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "6px 0 16px", gap: 10 }}>
+        <h2 style={{ fontFamily: DISPLAY, fontWeight: 700, fontSize: "26px", margin: 0, color: CREAM }}>
+          {mode === "edit" ? "Edit players" : "Who's playing?"}
+        </h2>
         {historyCount > 0 && (
-          <button type="button" onClick={onOpenHistory} style={ghostButton({ padding: "7px 12px" })}>
-            📜 History
-          </button>
+          <SootButton onClick={onOpenHistory} style={{ padding: "8px 12px", fontSize: "15px" }}>
+            <LedgerIcon size={18} /> History
+          </SootButton>
         )}
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {rows.map((row, i) => {
           const c = colorOf(row.colorId);
           const isLast = i === rows.length - 1;
           return (
-            <div
-              key={row.id}
-              style={{
-                background: `linear-gradient(145deg, ${c.bg}f0, ${c.bg}bb)`,
-                border: `1px solid ${c.accent}44`,
-                borderLeft: `4px solid ${c.accent}`,
-                borderRadius: 6,
-                padding: "14px 14px 16px",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                <span style={{ fontSize: "11px", letterSpacing: "2px", color: `${c.accent}`, textTransform: "uppercase", flexShrink: 0 }}>
-                  Player {i + 1}
-                </span>
-                <div style={{ flex: 1 }} />
+            <section key={row.id} style={{ ...parchment, borderRadius: 8, padding: "16px 16px 18px", borderTop: `5px solid ${c.seal}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+                <WaxSeal color={c} initial={initialOf(row.name) || String(i + 1)} size={50} />
+                <input
+                  ref={isLast ? lastInputRef : null}
+                  className="ledger-input"
+                  value={row.name}
+                  placeholder={`Player ${i + 1}'s name`}
+                  aria-label={`Player ${i + 1} name`}
+                  autoComplete="off"
+                  autoCapitalize="words"
+                  enterKeyHint="done"
+                  onChange={(e) => update(row.id, { name: e.target.value.slice(0, 24) })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") e.currentTarget.blur();
+                  }}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    height: 48,
+                    background: "rgba(255,251,238,0.5)",
+                    border: "1.5px solid rgba(43,29,16,0.3)",
+                    borderRadius: 5,
+                    color: INK,
+                    fontFamily: DISPLAY,
+                    fontWeight: 700,
+                    fontSize: "20px",
+                    padding: "0 12px",
+                    outline: "none",
+                  }}
+                />
                 {rows.length > 1 && (
                   <button
                     type="button"
                     aria-label={`Remove player ${i + 1}`}
                     onClick={() => removePlayer(row.id)}
-                    style={{ background: "none", border: "none", color: "#ff8a7a99", cursor: "pointer", fontSize: "22px", lineHeight: 1, padding: "0 4px" }}
+                    style={{ background: "none", border: "none", color: "rgba(43,29,16,0.55)", cursor: "pointer", padding: 6, margin: "-6px" }}
                   >
-                    ×
+                    <CloseIcon size={22} />
                   </button>
                 )}
               </div>
-              <input
-                ref={isLast ? lastInputRef : null}
-                value={row.name}
-                placeholder="Enter name"
-                autoComplete="off"
-                autoCapitalize="words"
-                enterKeyHint="done"
-                onChange={(e) => update(row.id, { name: e.target.value.slice(0, 24) })}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") e.currentTarget.blur();
-                }}
-                style={{
-                  width: "100%",
-                  background: "rgba(0,0,0,0.35)",
-                  border: `1px solid ${c.accent}55`,
-                  borderRadius: 4,
-                  color: CREAM,
-                  fontFamily: FONT,
-                  fontSize: "18px",
-                  padding: "10px 12px",
-                  outline: "none",
-                  marginBottom: 12,
-                }}
-              />
-              <ColorPicker value={row.colorId} takenBy={takenBy} onPick={(colorId) => update(row.id, { colorId })} />
-            </div>
+              <div style={{ fontFamily: BODY, fontStyle: "italic", fontSize: "15px", color: "rgba(43,29,16,0.7)", marginBottom: 8 }}>
+                Seal color: {c.name.toLowerCase()}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                {PLAYER_COLORS.map((pc) => {
+                  const selected = pc.id === row.colorId;
+                  const taken = takenBy[pc.id] && !selected;
+                  return (
+                    <button
+                      key={pc.id}
+                      type="button"
+                      aria-label={`${pc.name}${taken ? " (taken)" : ""}`}
+                      aria-pressed={selected}
+                      disabled={taken}
+                      onClick={() => update(row.id, { colorId: pc.id })}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        padding: 2,
+                        borderRadius: "50%",
+                        cursor: taken ? "default" : "pointer",
+                        outline: selected ? `2px solid ${INK}` : "none",
+                        outlineOffset: 1,
+                        transform: selected ? "scale(1.06)" : "none",
+                        transition: "transform 120ms",
+                      }}
+                    >
+                      <WaxSeal color={pc} size={32} dim={taken} />
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
           );
         })}
       </div>
 
       {rows.length < MAX_PLAYERS && (
-        <button
-          type="button"
+        <SootButton
           onClick={() => addPlayer()}
-          style={ghostButton({
-            width: "100%",
-            marginTop: 12,
-            padding: "14px",
-            fontSize: "13px",
-            border: "1px dashed rgba(201,168,76,0.45)",
-          })}
+          style={{ width: "100%", marginTop: 14, padding: "15px", fontSize: "18px", borderStyle: "dashed", background: "rgba(0,0,0,0.25)" }}
         >
-          + Add Player
-        </button>
+          <PlusIcon size={20} /> Add player
+        </SootButton>
       )}
 
-      {suggestions.length > 0 && rows.length <= MAX_PLAYERS && (
-        <div style={{ marginTop: 18 }}>
-          <div style={{ ...sectionLabel, fontSize: "10px", opacity: 0.8, marginBottom: 8 }}>Recent players</div>
+      {suggestions.length > 0 && (
+        <div style={{ marginTop: 20 }}>
+          <div style={{ fontFamily: BODY, fontStyle: "italic", fontSize: "16px", color: `${CREAM}aa`, marginBottom: 8 }}>Played before</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {suggestions.map((n) => (
-              <button
+              <SootButton
                 key={n}
-                type="button"
-                disabled={rows.length >= MAX_PLAYERS && !rows.some((r) => !r.name.trim())}
+                disabled={!roomForName}
                 onClick={() => applyRecentName(n)}
-                style={ghostButton({ textTransform: "none", letterSpacing: "0.5px", fontSize: "14px", padding: "7px 14px", borderRadius: 20 })}
+                style={{ padding: "7px 16px", borderRadius: 20, fontSize: "16px", color: CREAM }}
               >
                 {n}
-              </button>
+              </SootButton>
             ))}
           </div>
         </div>
       )}
 
-      <div style={{ marginTop: 24 }}>
-        <button type="button" onClick={finish} disabled={!canStart} style={solidButton({ opacity: canStart ? 1 : 0.4, cursor: canStart ? "pointer" : "default" })}>
-          {mode === "edit" ? "Back to Game" : "Start Game"}
-        </button>
+      <div style={{ marginTop: 26 }}>
+        <BrassButton onClick={finish} disabled={!canStart}>
+          {mode === "edit" ? "Back to game" : "Start game"}
+        </BrassButton>
         {!canStart && (
-          <div style={{ textAlign: "center", fontSize: "12px", color: `${CREAM}88`, marginTop: 10 }}>
+          <div style={{ textAlign: "center", fontStyle: "italic", fontSize: "16px", color: `${CREAM}99`, marginTop: 10 }}>
             Add at least one more player to start.
           </div>
         )}
         {canCancel && (
-          <div style={{ textAlign: "center", marginTop: 14 }}>
-            <button type="button" onClick={onCancel} style={ghostButton({ border: "none", color: `${CREAM}77` })}>
+          <div style={{ textAlign: "center", marginTop: 12 }}>
+            <button type="button" onClick={onCancel} style={{ background: "none", border: "none", color: `${CREAM}88`, fontFamily: BODY, fontSize: "17px", cursor: "pointer", padding: 10 }}>
               Cancel
             </button>
           </div>
@@ -476,12 +459,30 @@ function SetupScreen({ initialPlayers, mode, recentNames, canCancel, onCancel, o
   );
 }
 
-/* ─────────────────────────── Score inputs ─────────────────────────── */
+/* ─────────────────────────── Ledger rows ─────────────────────────── */
 
-function AddRow({ label, sublabel, entries, onAdd, onRemoveAt, color }) {
+const rowShell = { padding: "14px 0", borderBottom: "1px solid rgba(43,29,16,0.16)" };
+
+function RowHeading({ icon: IconC, label, sublabel, value, eraInk }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <span style={{ color: eraInk }}>
+        <IconC size={26} />
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontFamily: DISPLAY, fontWeight: 700, fontSize: "17px", lineHeight: 1.2 }}>{label}</div>
+        {sublabel && <div style={{ fontStyle: "italic", fontSize: "14.5px", color: "rgba(43,29,16,0.68)", lineHeight: 1.3 }}>{sublabel}</div>}
+      </div>
+      <div style={{ fontFamily: DISPLAY, fontWeight: 900, fontSize: "26px", color: eraInk, minWidth: 34, textAlign: "right" }}>
+        <RollingNumber value={value} />
+      </div>
+    </div>
+  );
+}
+
+function AddRow({ icon, label, sublabel, entries, onAdd, onRemoveAt, color, eraInk }) {
   const [draft, setDraft] = useState("");
   const inputRef = useRef(null);
-  const rowTotal = sum(entries);
 
   const submit = () => {
     const n = parseInt(draft, 10);
@@ -492,40 +493,36 @@ function AddRow({ label, sublabel, entries, onAdd, onRemoveAt, color }) {
   };
 
   return (
-    <div style={{ padding: "12px 14px", borderBottom: `1px solid ${color.accent}18` }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: "14px", color: CREAM }}>{label}</div>
-          {sublabel && <div style={{ fontSize: "11px", color: `${CREAM}66`, marginTop: 2 }}>{sublabel}</div>}
-        </div>
-        <div style={{ fontSize: "20px", fontWeight: "bold", color: color.accent, whiteSpace: "nowrap" }}>
-          {rowTotal}
-          <span style={{ fontSize: "11px", fontWeight: "normal", marginLeft: 3, opacity: 0.7 }}>VP</span>
-        </div>
-      </div>
+    <div style={rowShell}>
+      <RowHeading icon={icon} label={label} sublabel={sublabel} value={sum(entries)} eraInk={eraInk} />
 
       {entries.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 11 }}>
           {entries.map((n, i) => (
             <button
               key={i}
               type="button"
+              className="stamp-in"
               aria-label={`Remove ${n} from ${label}`}
               onClick={() => onRemoveAt(i)}
               style={{
-                padding: "4px 8px",
-                background: `${color.accent}1a`,
-                border: `1px solid ${color.accent}44`,
-                borderRadius: 12,
-                color: color.accent,
-                fontFamily: FONT,
-                fontSize: "13px",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                padding: "3px 6px 3px 9px",
+                background: "rgba(255,250,235,0.35)",
+                border: `1.5px solid ${color.ink}`,
+                borderRadius: 3,
+                color: color.ink,
+                fontFamily: DISPLAY,
+                fontWeight: 700,
+                fontSize: "15px",
                 cursor: "pointer",
-                lineHeight: 1.2,
+                rotate: `${((i * 7) % 5) - 2}deg`, // a little hand-stamped wobble
               }}
             >
               +{n}
-              <span style={{ marginLeft: 5, opacity: 0.5, fontSize: "11px" }}>×</span>
+              <CloseIcon size={12} strokeWidth={2} style={{ opacity: 0.55 }} />
             </button>
           ))}
         </div>
@@ -536,54 +533,56 @@ function AddRow({ label, sublabel, entries, onAdd, onRemoveAt, color }) {
           e.preventDefault();
           submit();
         }}
-        style={{ display: "flex", gap: 8, marginTop: 10 }}
+        style={{ display: "flex", gap: 8, marginTop: 11 }}
       >
         <input
           ref={inputRef}
+          className="ledger-input"
           type="text"
           inputMode="numeric"
           pattern="[0-9]*"
           enterKeyHint="enter"
           autoComplete="off"
           aria-label={`Add to ${label}`}
-          placeholder="Add VP"
+          placeholder="Add points"
           value={draft}
           onChange={(e) => setDraft(e.target.value.replace(/\D/g, "").slice(0, 3))}
           style={{
             flex: 1,
             minWidth: 0,
-            height: 44,
+            height: 46,
             textAlign: "center",
-            background: "rgba(0,0,0,0.35)",
-            border: `1px solid ${color.accent}55`,
-            borderRadius: 4,
-            fontSize: "20px",
-            fontWeight: "bold",
-            color: color.accent,
-            fontFamily: FONT,
+            background: "rgba(255,251,238,0.5)",
+            border: "1.5px solid rgba(43,29,16,0.3)",
+            borderRadius: 5,
+            fontFamily: DISPLAY,
+            fontWeight: 700,
+            fontSize: "22px",
+            color: INK,
             outline: "none",
             padding: 0,
           }}
         />
         <button
           type="submit"
+          className="press"
           disabled={!draft}
           // Stop the tap from closing the keyboard before the number is added.
           onPointerDown={(e) => e.preventDefault()}
           onMouseDown={(e) => e.preventDefault()}
           style={{
-            width: 76,
-            height: 44,
-            background: draft ? `${color.accent}33` : "transparent",
-            border: `1px solid ${color.accent}${draft ? "88" : "33"}`,
-            borderRadius: 4,
-            color: draft ? color.accent : `${color.accent}55`,
-            fontFamily: FONT,
-            fontSize: "13px",
-            letterSpacing: "2px",
-            textTransform: "uppercase",
-            fontWeight: "bold",
+            width: 82,
+            height: 46,
+            background: "linear-gradient(180deg, #ecd189, #c39c45 55%, #a98232)",
+            border: `1px solid ${BRASS_DARK}`,
+            borderRadius: 5,
+            boxShadow: "inset 0 1px 0 rgba(255,245,210,0.7), 0 1px 2px rgba(0,0,0,0.3)",
+            ...engraved,
+            fontFamily: DISPLAY,
+            fontWeight: 700,
+            fontSize: "17px",
             cursor: draft ? "pointer" : "default",
+            opacity: draft ? 1 : 0.45,
           }}
         >
           Add
@@ -593,242 +592,269 @@ function AddRow({ label, sublabel, entries, onAdd, onRemoveAt, color }) {
   );
 }
 
-function MerchantBonuses({ color, playerId, claimed, claimedBy, playersById, onToggle }) {
-  const bonusVP = claimed.reduce((s, id) => s + (MERCHANT_BONUSES.find((b) => b.id === id)?.vp ?? 0), 0);
+function MerchantRow({ color, eraInk, playerId, claimed, claimedBy, playersById, onToggle }) {
   return (
-    <div style={{ padding: "12px 14px" }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-        <span style={{ fontSize: "14px", color: CREAM }}>🎩 Merchant Beer Bonus</span>
-        <span style={{ fontSize: "11px", color: `${CREAM}55` }}>tap to claim</span>
-      </div>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+    <div style={{ ...rowShell, borderBottom: "none" }}>
+      <RowHeading icon={BarrelIcon} label="Merchant beer" sublabel="One player per barrel each era" value={merchantVP(claimed)} eraInk={eraInk} />
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 11 }}>
         {MERCHANT_BONUSES.map((b) => {
           const ownerId = claimedBy[b.id];
-          const active = ownerId === playerId;
-          const takenByOther = ownerId && !active;
-          const owner = takenByOther ? playersById[ownerId] : null;
+          const mine = ownerId === playerId;
+          const owner = ownerId && !mine ? playersById[ownerId] : null;
+          const ownerColor = owner ? colorOf(owner.colorId) : null;
           return (
             <button
               key={b.id}
               type="button"
-              disabled={takenByOther}
+              className="press"
+              disabled={Boolean(owner)}
+              aria-pressed={mine}
+              aria-label={`${b.vp} VP${owner ? ` (taken by ${owner.name})` : ""}`}
               onClick={() => onToggle(b.id)}
               style={{
-                padding: "8px 14px",
-                minHeight: 40,
-                background: active ? `${color.accent}44` : "transparent",
-                border: takenByOther ? `1px dashed ${CREAM}22` : `1px solid ${color.accent}${active ? "99" : "44"}`,
-                borderRadius: 4,
-                color: takenByOther ? `${CREAM}44` : active ? color.accent : `${CREAM}99`,
-                fontFamily: FONT,
-                fontSize: "14px",
-                fontWeight: active ? "bold" : "normal",
-                cursor: takenByOther ? "default" : "pointer",
-                textDecoration: takenByOther ? "line-through" : "none",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                minHeight: 44,
+                padding: owner ? "4px 12px 4px 6px" : "4px 14px",
+                borderRadius: 22,
+                background: mine ? color.seal : owner ? "rgba(43,29,16,0.06)" : "rgba(255,250,235,0.35)",
+                border: mine ? `1.5px solid ${color.ink}` : owner ? "1.5px solid rgba(43,29,16,0.15)" : `1.5px dashed ${eraInk}`,
+                color: mine ? color.sealText : owner ? "rgba(43,29,16,0.45)" : INK,
+                fontFamily: DISPLAY,
+                fontWeight: 700,
+                fontSize: "16px",
+                cursor: owner ? "default" : "pointer",
+                boxShadow: mine ? "inset 0 1px 0 rgba(255,255,255,0.3), 0 2px 3px rgba(0,0,0,0.25)" : "none",
               }}
             >
-              {active ? "✓ " : ""}
-              {b.label}
-              {owner && <span style={{ fontSize: "11px", marginLeft: 6, textDecoration: "none", display: "inline-block" }}>· {owner.name}</span>}
+              {owner && <WaxSeal color={ownerColor} initial={initialOf(owner.name)} size={26} />}
+              {mine && "✓ "}
+              {b.vp} VP
+              {owner && <span style={{ fontFamily: BODY, fontWeight: 400, fontStyle: "italic", fontSize: "14px", maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{owner.name}</span>}
             </button>
           );
         })}
       </div>
-      {bonusVP > 0 && <div style={{ marginTop: 8, fontSize: "12px", color: `${color.accent}bb` }}>+{bonusVP} VP from merchant bonuses</div>}
     </div>
   );
 }
 
-function EraScoreCard({ player, era, color, claimedBy, playersById, onUpdateEra }) {
-  const eraData = player[era];
-  const update = (key, val) => onUpdateEra(era, { ...eraData, [key]: val });
+/* ─────────────────────────── Player card ─────────────────────────── */
 
+function PlayerCard({ player, phase, claimedBy, playersById, onUpdateEra }) {
+  const color = colorOf(player.colorId);
+  const theme = ERA_THEME[phase];
+  const total = totalVP(player);
+
+  const eraData = phase === "final" ? null : player[phase];
+  const update = (key, val) => onUpdateEra(phase, { ...eraData, [key]: val });
   const toggleMerchant = (id) => {
-    const already = eraData.merchantBonuses.includes(id);
-    update("merchantBonuses", already ? eraData.merchantBonuses.filter((x) => x !== id) : [...eraData.merchantBonuses, id]);
+    const has = eraData.merchantBonuses.includes(id);
+    update("merchantBonuses", has ? eraData.merchantBonuses.filter((x) => x !== id) : [...eraData.merchantBonuses, id]);
   };
 
   return (
-    <div style={{ background: `${color.accent}08`, border: `1px solid ${color.accent}22`, borderRadius: 5, overflow: "hidden" }}>
-      <div
-        style={{
-          padding: "8px 14px",
-          background: `${color.accent}14`,
-          borderBottom: `1px solid ${color.accent}22`,
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <span style={{ fontSize: "11px", letterSpacing: "2px", textTransform: "uppercase", color: `${color.accent}cc` }}>{PHASE_LABELS[era]}</span>
-        <span style={{ fontSize: "16px", fontWeight: "bold", color: color.accent }}>{eraVP(eraData)} VP</span>
+    <article style={{ borderRadius: 8, overflow: "hidden", boxShadow: "0 8px 22px rgba(0,0,0,0.55)", border: "1px solid rgba(201,162,74,0.3)" }}>
+      {/* Brass nameplate */}
+      <div style={{ ...brassPlate("9px"), display: "flex", alignItems: "center", gap: 12, padding: "12px 22px 12px 20px" }}>
+        <WaxSeal color={color} initial={initialOf(player.name)} size={46} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ ...engraved, fontFamily: DISPLAY, fontWeight: 700, fontSize: "21px", lineHeight: 1.15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {player.name}
+          </div>
+          <div style={{ fontStyle: "italic", fontSize: "15px", color: "#5b4117" }}>
+            {phase === "final" ? "Final total" : `${eraVP(eraData)} this era`}
+          </div>
+        </div>
+        <div
+          style={{
+            ...engraved,
+            fontFamily: DISPLAY,
+            fontWeight: 900,
+            fontSize: "32px",
+            lineHeight: 1,
+            padding: "6px 10px 7px",
+            minWidth: 58,
+            textAlign: "center",
+            borderRadius: 5,
+            background: "rgba(80,55,12,0.16)",
+            boxShadow: "inset 0 2px 3px rgba(70,45,8,0.45), 0 1px 0 rgba(255,240,195,0.6)",
+          }}
+          aria-label={`${player.name} total ${total}`}
+        >
+          <RollingNumber value={total} />
+        </div>
       </div>
-      <AddRow
-        label={era === "canal" ? "⛓ Canal Links" : "⛓ Rail Links"}
-        sublabel="Add each link's VP (connection symbols at both ends)"
-        entries={eraData.links}
-        onAdd={(n) => update("links", [...eraData.links, n])}
-        onRemoveAt={(i) => update("links", eraData.links.filter((_, j) => j !== i))}
-        color={color}
-      />
-      <AddRow
-        label="🏭 Industry Tiles"
-        sublabel="Add the VP shown on each flipped tile"
-        entries={eraData.tiles}
-        onAdd={(n) => update("tiles", [...eraData.tiles, n])}
-        onRemoveAt={(i) => update("tiles", eraData.tiles.filter((_, j) => j !== i))}
-        color={color}
-      />
-      <MerchantBonuses
-        color={color}
-        playerId={player.id}
-        claimed={eraData.merchantBonuses}
-        claimedBy={claimedBy}
-        playersById={playersById}
-        onToggle={toggleMerchant}
-      />
-    </div>
+      <div style={{ height: 5, background: `linear-gradient(90deg, ${color.seal}, ${color.seal}cc)` }} />
+
+      {/* Ledger page */}
+      <div style={{ ...parchment, padding: phase === "final" ? "10px 18px 14px" : "2px 16px 6px" }}>
+        {phase === "final" ? (
+          <>
+            <LedgerLine label="Canal era" value={eraVP(player.canal)} />
+            <LedgerLine label="Rail era" value={eraVP(player.rail)} />
+            <div style={{ borderTop: `3px double rgba(43,29,16,0.45)`, marginTop: 4 }} />
+            <LedgerLine label="Total" value={total} strong color={color.ink} />
+          </>
+        ) : (
+          <>
+            <AddRow
+              icon={phase === "canal" ? CanalIcon : RailIcon}
+              label={phase === "canal" ? "Canal links" : "Rail links"}
+              sublabel="Add each link's points (link icons at both ends)"
+              entries={eraData.links}
+              onAdd={(n) => update("links", [...eraData.links, n])}
+              onRemoveAt={(i) => update("links", eraData.links.filter((_, j) => j !== i))}
+              color={color}
+              eraInk={theme.ink}
+            />
+            <AddRow
+              icon={FactoryIcon}
+              label="Industry tiles"
+              sublabel="Add the points on each flipped tile"
+              entries={eraData.tiles}
+              onAdd={(n) => update("tiles", [...eraData.tiles, n])}
+              onRemoveAt={(i) => update("tiles", eraData.tiles.filter((_, j) => j !== i))}
+              color={color}
+              eraInk={theme.ink}
+            />
+            <MerchantRow
+              color={color}
+              eraInk={theme.ink}
+              playerId={player.id}
+              claimed={eraData.merchantBonuses}
+              claimedBy={claimedBy}
+              playersById={playersById}
+              onToggle={toggleMerchant}
+            />
+          </>
+        )}
+      </div>
+    </article>
   );
 }
 
-/* ─────────────────────────── Game screen ─────────────────────────── */
+/* ─────────────────────────── Final-score pieces ─────────────────────────── */
 
-function FinalBreakdown({ player, color }) {
-  const total = totalVP(player);
+function WinnerBanner({ players }) {
+  const ranked = rankPlayers(players.map((p) => ({ ...p, total: totalVP(p) })));
+  const leaders = ranked.filter((p) => p.rank === 0);
+  const top = leaders[0];
+  const runnerUp = ranked.find((p) => p.rank > 0);
+  if (!top || top.total === 0) return null;
+
+  const tie = leaders.length > 1;
+  const color = colorOf(top.colorId);
+  const names = leaders.map((p) => p.name);
+  const headline = tie ? `${names.slice(0, -1).join(", ")} & ${names[names.length - 1]} tie` : `${top.name} wins`;
+  const margin = !tie && runnerUp ? top.total - runnerUp.total : 0;
+
   return (
-    <div>
-      {ERAS.map((era) => (
-        <div
-          key={era}
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            padding: "10px 14px",
-            marginBottom: 8,
-            background: `${color.accent}0d`,
-            border: `1px solid ${color.accent}22`,
-            borderRadius: 4,
-          }}
-        >
-          <span style={{ fontSize: "12px", letterSpacing: "2px", textTransform: "uppercase", color: `${CREAM}88` }}>{PHASE_LABELS[era]}</span>
-          <span style={{ fontSize: "20px", fontWeight: "bold", color: color.accent }}>{eraVP(player[era])} VP</span>
-        </div>
-      ))}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          padding: "12px 14px",
-          marginTop: 4,
-          background: `${color.accent}1a`,
-          border: `1px solid ${color.accent}55`,
-          borderRadius: 4,
-        }}
-      >
-        <span style={{ fontSize: "12px", letterSpacing: "3px", textTransform: "uppercase", color: color.accent }}>Total</span>
-        <span style={{ fontSize: "28px", fontWeight: "bold", color: color.accent, letterSpacing: "-1px" }}>{total} VP</span>
+    <section
+      className="plate-in shimmer"
+      aria-live="polite"
+      style={{ ...brassPlate("13px"), borderRadius: 10, padding: "22px 26px 24px", textAlign: "center", marginBottom: 18, border: `1px solid ${BRASS_DARK}` }}
+    >
+      <div className="wreath-in" style={{ position: "relative", width: 104, height: 104, margin: "0 auto 4px" }}>
+        <WreathIcon size={104} style={{ color: "#5a3f12", position: "absolute", inset: 0 }} />
+        {tie ? (
+          <div style={{ position: "absolute", left: 0, right: 0, top: 30, display: "flex", justifyContent: "center" }}>
+            {leaders.slice(0, 4).map((p, i) => (
+              <WaxSeal key={p.id} color={colorOf(p.colorId)} initial={initialOf(p.name)} size={36} style={{ marginLeft: i ? -12 : 0 }} />
+            ))}
+          </div>
+        ) : (
+          <WaxSeal color={color} initial={initialOf(top.name)} size={54} style={{ position: "absolute", left: 25, top: 22 }} />
+        )}
       </div>
-    </div>
+      <div style={{ ...engraved, fontFamily: DISPLAY, fontWeight: 900, fontSize: "clamp(24px, 7vw, 32px)", lineHeight: 1.15 }}>{headline}</div>
+      <div style={{ fontStyle: "italic", fontSize: "18px", color: "#4a3412", marginTop: 4 }}>
+        {top.total} victory points{margin > 0 ? `, ${margin} ahead` : ""}
+      </div>
+    </section>
   );
 }
 
 function Standings({ players }) {
   const ranked = rankPlayers(players.map((p) => ({ ...p, total: totalVP(p) })));
   return (
-    <div style={panel}>
-      <div style={{ padding: "13px 18px", borderBottom: "1px solid rgba(201,168,76,0.2)", background: "rgba(201,168,76,0.06)" }}>
-        <span style={{ ...sectionLabel, letterSpacing: "4px" }}>🏆 Standings</span>
+    <section style={{ background: "rgba(0,0,0,0.42)", border: "1px solid rgba(201,162,74,0.28)", borderRadius: 8, overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 18px", borderBottom: "1px solid rgba(201,162,74,0.2)" }}>
+        <WreathIcon size={22} style={{ color: BRASS }} />
+        <h2 style={{ fontFamily: DISPLAY, fontWeight: 700, fontSize: "20px", margin: 0, color: BRASS_LIGHT }}>Standings</h2>
       </div>
       {ranked.map((p) => {
-        const color = colorOf(p.colorId);
-        const first = p.rank === 0;
+        const c = colorOf(p.colorId);
+        const first = p.rank === 0 && p.total > 0;
         return (
           <div
             key={p.id}
             style={{
               display: "flex",
               alignItems: "center",
-              padding: "11px 18px",
               gap: 12,
-              borderBottom: "1px solid rgba(201,168,76,0.08)",
-              background: first ? "rgba(201,168,76,0.07)" : "transparent",
+              padding: "10px 18px",
+              borderBottom: "1px solid rgba(201,162,74,0.1)",
+              background: first ? "linear-gradient(90deg, rgba(201,162,74,0.16), transparent)" : "transparent",
             }}
           >
-            <div
-              style={{
-                width: 30,
-                height: 30,
-                borderRadius: "50%",
-                flexShrink: 0,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: first ? "17px" : "13px",
-                background: first ? "#c9a84c22" : "transparent",
-                border: first ? "1px solid #c9a84c44" : "1px solid rgba(255,255,255,0.1)",
-                color: first ? GOLD : `${CREAM}66`,
-              }}
-            >
-              {first ? "👑" : p.rank + 1}
-            </div>
-            <div style={{ width: 10, height: 10, borderRadius: "50%", flexShrink: 0, background: color.accent, boxShadow: `0 0 6px ${color.accent}88` }} />
-            <span style={{ flex: 1, fontSize: "15px", color: CREAM, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {p.name}
-              {p.tied && <span style={{ fontSize: "10px", color: `${GOLD}aa`, marginLeft: 8, letterSpacing: 2 }}>TIED</span>}
+            <span style={{ width: 22, display: "flex", justifyContent: "center", fontFamily: DISPLAY, fontWeight: 700, fontSize: "17px", color: first ? BRASS_LIGHT : `${CREAM}66` }}>
+              {first ? <WreathIcon size={22} style={{ color: BRASS_LIGHT }} /> : p.rank + 1}
             </span>
-            <span style={{ fontSize: "22px", fontWeight: "bold", color: first ? GOLD : `${CREAM}bb`, letterSpacing: "-1px" }}>{p.total}</span>
-            <span style={{ fontSize: "10px", color: `${CREAM}44` }}>VP</span>
+            <WaxSeal color={c} initial={initialOf(p.name)} size={30} />
+            <span style={{ flex: 1, minWidth: 0, fontSize: "18px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {p.name}
+              {p.tied && <span style={{ fontStyle: "italic", fontSize: "15px", color: `${BRASS}cc`, marginLeft: 8 }}>tied</span>}
+            </span>
+            <span style={{ fontFamily: DISPLAY, fontWeight: 900, fontSize: "24px", color: first ? BRASS_LIGHT : `${CREAM}cc` }}>
+              <RollingNumber value={p.total} />
+            </span>
           </div>
         );
       })}
-    </div>
+    </section>
   );
 }
 
 function SavePanel({ saved, onSave, onRematch, onNewGame }) {
   return (
-    <div style={{ ...panel, padding: 16, marginTop: 18, textAlign: "center" }}>
+    <section style={{ marginTop: 18, padding: 18, textAlign: "center", background: "rgba(0,0,0,0.42)", border: "1px solid rgba(201,162,74,0.28)", borderRadius: 8 }}>
       {saved ? (
         <>
-          <div style={{ fontSize: "15px", color: GOLD, marginBottom: 4 }}>✓ Saved to history</div>
-          <div style={{ fontSize: "12px", color: `${CREAM}77`, marginBottom: 14 }}>Changed a score? Tap update to fix the saved copy.</div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
-            <button type="button" onClick={onSave} style={ghostButton()}>
-              Update Saved Game
-            </button>
-            <button type="button" onClick={onRematch} style={ghostButton()}>
-              🔁 Rematch
-            </button>
-            <button type="button" onClick={onNewGame} style={ghostButton()}>
-              New Players
-            </button>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: DISPLAY, fontWeight: 700, fontSize: "19px", color: BRASS_LIGHT }}>
+            <LedgerIcon size={20} /> Saved to history
+          </div>
+          <p style={{ fontStyle: "italic", fontSize: "16px", color: `${CREAM}99`, margin: "6px 0 14px" }}>
+            Changed a score since? Update the saved copy.
+          </p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+            <SootButton onClick={onSave}>Update saved game</SootButton>
+            <SootButton onClick={onRematch}>Rematch</SootButton>
+            <SootButton onClick={onNewGame}>New players</SootButton>
           </div>
         </>
       ) : (
         <>
-          <div style={{ fontSize: "12px", color: `${CREAM}88`, marginBottom: 12 }}>Game over? Save it to keep the result and tally wins.</div>
-          <button type="button" onClick={onSave} style={solidButton()}>
-            🏁 Finish & Save Game
-          </button>
+          <p style={{ fontStyle: "italic", fontSize: "17px", color: `${CREAM}aa`, margin: "0 0 14px" }}>
+            When the game's over, save it to the history and win tally.
+          </p>
+          <BrassButton onClick={onSave}>Finish &amp; save game</BrassButton>
         </>
       )}
-    </div>
+    </section>
   );
 }
 
-function GameScreen({ game, setGame, commit, onUndo, canUndo, onEditPlayers, onNewGame, onOpenHistory, onSaveGame, historyCount }) {
+/* ─────────────────────────── Game screen ─────────────────────────── */
+
+function GameScreen({ game, setGame, commit, onUndo, canUndo, onEditPlayers, onNewGame, onOpenHistory, onSaveGame }) {
   const { players, phase } = game;
   const playersById = useMemo(() => Object.fromEntries(players.map((p) => [p.id, p])), [players]);
 
   const claimedByEra = useMemo(() => {
     const out = { canal: {}, rail: {} };
-    for (const era of ERAS) {
-      for (const p of players) {
-        for (const id of p[era].merchantBonuses) out[era][id] = p.id;
-      }
-    }
+    for (const era of ERAS) for (const p of players) for (const id of p[era].merchantBonuses) out[era][id] = p.id;
     return out;
   }, [players]);
 
@@ -837,174 +863,126 @@ function GameScreen({ game, setGame, commit, onUndo, canUndo, onEditPlayers, onN
   const updateEra = (playerId, era, eraData) =>
     commit((g) => ({ ...g, players: g.players.map((p) => (p.id === playerId ? { ...p, [era]: eraData } : p)) }));
 
+  const resetScores = (g) => ({
+    ...g,
+    phase: "canal",
+    savedHistoryId: null,
+    players: g.players.map((p) => ({ ...p, canal: defaultEra(), rail: defaultEra() })),
+  });
+
   const clearScores = () => {
     if (!window.confirm("Clear all scores for this game? Players stay the same.")) return;
-    commit((g) => ({
-      ...g,
-      phase: "canal",
-      savedHistoryId: null,
-      players: g.players.map((p) => ({ ...p, canal: defaultEra(), rail: defaultEra() })),
-    }));
+    commit(resetScores);
   };
 
-  const rematch = () =>
-    commit((g) => ({
-      ...g,
-      phase: "canal",
-      savedHistoryId: null,
-      players: g.players.map((p) => ({ ...p, canal: defaultEra(), rail: defaultEra() })),
-    }));
-
   return (
-    <Shell compactHeader>
+    <Shell era={phase} compact>
       {/* Top actions */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
-        <button type="button" onClick={onEditPlayers} style={ghostButton({ flex: 1, padding: "9px 6px" })}>
-          👥 Players
-        </button>
-        <button type="button" onClick={onOpenHistory} style={ghostButton({ flex: 1, padding: "9px 6px" })}>
-          📜 History{historyCount ? ` (${historyCount})` : ""}
-        </button>
-        <button type="button" onClick={onNewGame} style={ghostButton({ flex: 1, padding: "9px 6px" })}>
-          ✦ New Game
-        </button>
-      </div>
+      <nav style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        <SootButton onClick={onEditPlayers} style={{ flex: 1, padding: "10px 6px", gap: 6 }}>
+          <TopHatIcon size={20} /> Players
+        </SootButton>
+        <SootButton onClick={onOpenHistory} style={{ flex: 1, padding: "10px 6px", gap: 6 }}>
+          <LedgerIcon size={19} /> History
+        </SootButton>
+        <SootButton onClick={onNewGame} style={{ flex: 1, padding: "10px 6px", gap: 6 }}>
+          <CogIcon size={19} /> New game
+        </SootButton>
+      </nav>
 
-      {/* Phase tabs + undo, pinned while scrolling */}
+      {/* Era tabs + undo, pinned while scrolling */}
       <div
         style={{
           display: "flex",
           gap: 8,
-          marginBottom: 18,
           position: "sticky",
           top: 0,
           zIndex: 5,
-          padding: "6px 0",
-          background: "rgba(13,10,6,0.92)",
-          backdropFilter: "blur(6px)",
-          WebkitBackdropFilter: "blur(6px)",
+          padding: "8px 14px",
+          margin: "0 -14px 12px",
+          background: "rgba(17,12,8,0.82)",
+          backdropFilter: "blur(8px)",
+          WebkitBackdropFilter: "blur(8px)",
         }}
       >
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          minWidth: 0,
-          background: "rgba(0,0,0,0.5)",
-          border: "1px solid rgba(201,168,76,0.3)",
-          borderRadius: 4,
-          overflow: "hidden",
-        }}
-      >
-        {["canal", "rail", "final"].map((ph) => (
-          <button
-            key={ph}
-            type="button"
-            onClick={() => setPhase(ph)}
-            style={{
-              flex: 1,
-              padding: "13px 4px",
-              background: phase === ph ? "linear-gradient(135deg, #c9a84c22, #c9a84c44)" : "rgba(13,10,6,0.85)",
-              border: "none",
-              borderRight: ph !== "final" ? "1px solid rgba(201,168,76,0.2)" : "none",
-              borderBottom: phase === ph ? "2px solid #c9a84c" : "2px solid transparent",
-              color: phase === ph ? GOLD : `${CREAM}88`,
-              fontFamily: FONT,
-              fontSize: "10px",
-              letterSpacing: "1.5px",
-              textTransform: "uppercase",
-              cursor: "pointer",
-            }}
-          >
-            {PHASE_LABELS[ph]}
-          </button>
-        ))}
-      </div>
-      <button
-        type="button"
-        onClick={onUndo}
-        disabled={!canUndo}
-        aria-label="Undo"
-        style={ghostButton({
-          padding: "0 10px",
-          minWidth: 64,
-          fontSize: "11px",
-          letterSpacing: "1px",
-          opacity: canUndo ? 1 : 0.35,
-          cursor: canUndo ? "pointer" : "default",
-        })}
-      >
-        ↶ Undo
-      </button>
-      </div>
-
-      {/* Player cards: one per row on phones, two per row on wider screens */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))",
-          gap: 14,
-          marginBottom: 22,
-        }}
-      >
-        {players.map((player) => {
-          const color = colorOf(player.colorId);
-          return (
-            <div
-              key={player.id}
-              style={{
-                background: `linear-gradient(145deg, ${color.bg}f0, ${color.bg}bb)`,
-                border: `1px solid ${color.accent}44`,
-                borderTop: `3px solid ${color.accent}`,
-                borderRadius: 6,
-                overflow: "hidden",
-                boxShadow: `0 4px 28px ${color.accent}0d`,
-              }}
-            >
-              <div
+        <div role="tablist" style={{ flex: 1, display: "flex", minWidth: 0, background: "rgba(0,0,0,0.5)", border: "1px solid rgba(201,162,74,0.32)", borderRadius: 8, overflow: "hidden" }}>
+          {PHASES.map((ph, i) => {
+            const active = phase === ph;
+            const t = ERA_THEME[ph];
+            const IconC = PHASE_ICON[ph];
+            return (
+              <button
+                key={ph}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setPhase(ph)}
                 style={{
-                  padding: "12px 14px",
+                  flex: 1,
+                  minWidth: 0,
                   display: "flex",
+                  flexDirection: "column",
                   alignItems: "center",
-                  gap: 10,
-                  background: `linear-gradient(135deg, ${color.accent}1a, transparent)`,
-                  borderBottom: `1px solid ${color.accent}33`,
+                  gap: 3,
+                  padding: "8px 2px 7px",
+                  background: active ? `linear-gradient(180deg, ${t.glow}, rgba(0,0,0,0.2))` : "transparent",
+                  border: "none",
+                  borderLeft: i ? "1px solid rgba(201,162,74,0.16)" : "none",
+                  borderBottom: `3px solid ${active ? t.accent : "transparent"}`,
+                  color: active ? t.accent : `${CREAM}80`,
+                  fontFamily: DISPLAY,
+                  fontWeight: 700,
+                  fontSize: "14px",
+                  cursor: "pointer",
+                  transition: "color 200ms, background 200ms",
                 }}
               >
-                <div style={{ width: 12, height: 12, borderRadius: "50%", background: color.accent, flexShrink: 0, boxShadow: `0 0 8px ${color.accent}88` }} />
-                <div style={{ flex: 1, minWidth: 0, fontSize: "17px", letterSpacing: "0.5px", color: CREAM, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {player.name}
-                </div>
-                <div style={{ fontSize: "26px", fontWeight: "bold", color: color.accent, letterSpacing: "-1px" }}>{totalVP(player)}</div>
-              </div>
-              <div style={{ padding: 12 }}>
-                {phase === "final" ? (
-                  <FinalBreakdown player={player} color={color} />
-                ) : (
-                  <EraScoreCard
-                    player={player}
-                    era={phase}
-                    color={color}
-                    claimedBy={claimedByEra[phase]}
-                    playersById={playersById}
-                    onUpdateEra={(era, data) => updateEra(player.id, era, data)}
-                  />
-                )}
-              </div>
-            </div>
-          );
-        })}
+                <IconC size={22} />
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+        <SootButton
+          onClick={onUndo}
+          disabled={!canUndo}
+          ariaLabel="Undo"
+          style={{ flexDirection: "column", gap: 3, width: 62, padding: "8px 4px 7px", fontFamily: DISPLAY, fontWeight: 700, fontSize: "14px", borderRadius: 8 }}
+        >
+          <UndoIcon size={22} />
+          Undo
+        </SootButton>
+      </div>
+
+      {phase === "final" && <WinnerBanner players={players} />}
+
+      {/* Player cards: one per row on phones, two per row on wider screens */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))", gap: 16, marginBottom: 22 }}>
+        {players.map((player) => (
+          <PlayerCard
+            key={player.id}
+            player={player}
+            phase={phase}
+            claimedBy={phase === "final" ? {} : claimedByEra[phase]}
+            playersById={playersById}
+            onUpdateEra={(era, data) => updateEra(player.id, era, data)}
+          />
+        ))}
       </div>
 
       <Standings players={players} />
 
       {phase === "final" && (
-        <SavePanel saved={Boolean(game.savedHistoryId)} onSave={onSaveGame} onRematch={rematch} onNewGame={onNewGame} />
+        <SavePanel saved={Boolean(game.savedHistoryId)} onSave={onSaveGame} onRematch={() => commit(resetScores)} onNewGame={onNewGame} />
       )}
 
-      <div style={{ textAlign: "center", marginTop: 22 }}>
-        <button type="button" onClick={clearScores} style={ghostButton({ border: "1px solid rgba(201,168,76,0.2)", color: `${CREAM}66`, fontSize: "10px", letterSpacing: "3px", padding: "8px 24px" })}>
-          Clear All Scores
+      <div style={{ textAlign: "center", marginTop: 24 }}>
+        <button
+          type="button"
+          onClick={clearScores}
+          style={{ background: "none", border: "none", color: `${CREAM}70`, fontFamily: BODY, fontStyle: "italic", fontSize: "16px", cursor: "pointer", padding: 10, textDecoration: "underline", textUnderlineOffset: 4 }}
+        >
+          Clear all scores
         </button>
       </div>
     </Shell>
@@ -1016,10 +994,9 @@ function GameScreen({ game, setGame, commit, onUndo, canUndo, onEditPlayers, onN
 function HistoryScreen({ history, onBack, onDelete, onClear }) {
   const tally = useMemo(() => {
     const map = new Map();
-    // history is newest-first, so the first spelling we meet is the most recent one
+    // history is newest-first, so the first spelling and color we meet are the most recent
     for (const g of history) {
-      const ranked = rankPlayers(g.players);
-      for (const p of ranked) {
+      for (const p of rankPlayers(g.players)) {
         const key = nameKey(p.name);
         if (!map.has(key)) map.set(key, { name: p.name, colorId: p.colorId, games: 0, wins: 0, best: 0 });
         const t = map.get(key);
@@ -1031,88 +1008,84 @@ function HistoryScreen({ history, onBack, onDelete, onClear }) {
     return [...map.values()].sort((a, b) => b.wins - a.wins || b.games - a.games || a.name.localeCompare(b.name));
   }, [history]);
 
+  const colHead = { fontStyle: "italic", fontSize: "14px", color: "rgba(43,29,16,0.6)", width: 44, textAlign: "right" };
+  const colNum = { fontFamily: DISPLAY, fontWeight: 700, fontSize: "19px", width: 44, textAlign: "right" };
+
   return (
-    <Shell compactHeader>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-        <button type="button" onClick={onBack} style={ghostButton()}>
-          ← Back
-        </button>
-        <span style={{ ...sectionLabel, flex: 1, textAlign: "right" }}>Game History</span>
+    <Shell era="final" compact>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "4px 0 16px" }}>
+        <SootButton onClick={onBack} ariaLabel="Back" style={{ padding: "8px 12px 8px 8px" }}>
+          <BackIcon size={20} /> Back
+        </SootButton>
+        <h2 style={{ fontFamily: DISPLAY, fontWeight: 700, fontSize: "24px", margin: 0, color: CREAM }}>Game history</h2>
       </div>
 
       {history.length === 0 ? (
-        <div style={{ ...panel, padding: 24, textAlign: "center", color: `${CREAM}88`, fontSize: "14px" }}>
-          No saved games yet. Finish a game and tap <span style={{ color: GOLD }}>Finish &amp; Save Game</span> on the Final Score tab.
-        </div>
+        <section style={{ ...parchment, borderRadius: 8, padding: "22px 20px", fontSize: "18px", lineHeight: 1.45 }}>
+          No games saved yet. When a game ends, open the Final score tab and tap <strong style={{ fontFamily: DISPLAY }}>Finish &amp; save game</strong>.
+        </section>
       ) : (
         <>
-          {/* Win tally */}
-          <div style={{ ...panel, marginBottom: 18 }}>
-            <div style={{ padding: "13px 18px", borderBottom: "1px solid rgba(201,168,76,0.2)", background: "rgba(201,168,76,0.06)", display: "flex" }}>
-              <span style={{ ...sectionLabel, flex: 1 }}>👑 Win Tally</span>
-              <span style={{ fontSize: "10px", letterSpacing: "2px", color: `${CREAM}55`, textTransform: "uppercase" }}>Wins · Games · Best</span>
+          <section style={{ ...parchment, borderRadius: 8, padding: "14px 18px 8px", marginBottom: 18 }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, paddingBottom: 6, borderBottom: "3px double rgba(43,29,16,0.4)" }}>
+              <h3 style={{ flex: 1, fontFamily: DISPLAY, fontWeight: 700, fontSize: "21px", margin: 0 }}>Win tally</h3>
+              <span style={colHead}>wins</span>
+              <span style={colHead}>games</span>
+              <span style={colHead}>best</span>
             </div>
-            {tally.map((t) => {
-              const c = colorOf(t.colorId);
-              return (
-                <div key={t.name} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 18px", borderBottom: "1px solid rgba(201,168,76,0.08)" }}>
-                  <div style={{ width: 10, height: 10, borderRadius: "50%", background: c.accent, flexShrink: 0 }} />
-                  <span style={{ flex: 1, fontSize: "15px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</span>
-                  <span style={{ fontSize: "20px", fontWeight: "bold", color: GOLD, minWidth: 26, textAlign: "right" }}>{t.wins}</span>
-                  <span style={{ fontSize: "13px", color: `${CREAM}77`, minWidth: 26, textAlign: "right" }}>{t.games}</span>
-                  <span style={{ fontSize: "13px", color: `${CREAM}77`, minWidth: 34, textAlign: "right" }}>{t.best}</span>
-                </div>
-              );
-            })}
-          </div>
+            {tally.map((t) => (
+              <div key={t.name} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 0", borderBottom: "1px solid rgba(43,29,16,0.14)" }}>
+                <WaxSeal color={colorOf(t.colorId)} initial={initialOf(t.name)} size={28} />
+                <span style={{ flex: 1, minWidth: 0, fontSize: "18px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</span>
+                <span style={{ ...colNum, fontWeight: 900, fontSize: "22px", color: "#6b4d14" }}>{t.wins}</span>
+                <span style={colNum}>{t.games}</span>
+                <span style={colNum}>{t.best}</span>
+              </div>
+            ))}
+          </section>
 
-          {/* Game list */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {history.map((g) => {
-              const ranked = rankPlayers(g.players);
-              return (
-                <div key={g.id} style={panel}>
-                  <div style={{ display: "flex", alignItems: "center", padding: "10px 16px", background: "rgba(201,168,76,0.06)", borderBottom: "1px solid rgba(201,168,76,0.15)" }}>
-                    <span style={{ flex: 1, fontSize: "12px", letterSpacing: "1px", color: `${CREAM}aa` }}>{formatDate(g.date)}</span>
-                    <button
-                      type="button"
-                      aria-label="Delete this game"
-                      onClick={() => {
-                        if (window.confirm("Delete this game from history?")) onDelete(g.id);
-                      }}
-                      style={{ background: "none", border: "none", color: "#ff8a7a88", fontSize: "20px", cursor: "pointer", lineHeight: 1, padding: "0 2px" }}
-                    >
-                      ×
-                    </button>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {history.map((g) => (
+              <section key={g.id} style={{ ...parchment, borderRadius: 8, padding: "10px 16px 8px" }}>
+                <div style={{ display: "flex", alignItems: "center", paddingBottom: 6, borderBottom: "1px solid rgba(43,29,16,0.25)" }}>
+                  <span style={{ flex: 1, fontStyle: "italic", fontSize: "16px", color: "rgba(43,29,16,0.75)" }}>{formatDate(g.date)}</span>
+                  <button
+                    type="button"
+                    aria-label="Delete this game"
+                    onClick={() => {
+                      if (window.confirm("Delete this game from history?")) onDelete(g.id);
+                    }}
+                    style={{ background: "none", border: "none", color: "rgba(43,29,16,0.5)", cursor: "pointer", padding: 6, margin: -6 }}
+                  >
+                    <CloseIcon size={20} />
+                  </button>
+                </div>
+                {rankPlayers(g.players).map((p, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0" }}>
+                    <span style={{ width: 22, display: "flex", justifyContent: "center", fontFamily: DISPLAY, fontWeight: 700, color: "rgba(43,29,16,0.55)" }}>
+                      {p.rank === 0 ? <WreathIcon size={20} style={{ color: "#6b4d14" }} /> : p.rank + 1}
+                    </span>
+                    <WaxSeal color={colorOf(p.colorId)} initial={initialOf(p.name)} size={26} />
+                    <span style={{ flex: 1, minWidth: 0, fontSize: "17px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                    <span style={{ fontStyle: "italic", fontSize: "14px", color: "rgba(43,29,16,0.55)" }}>
+                      {p.canal} + {p.rail}
+                    </span>
+                    <span style={{ fontFamily: DISPLAY, fontWeight: 900, fontSize: "20px", minWidth: 34, textAlign: "right", color: p.rank === 0 ? "#6b4d14" : INK }}>{p.total}</span>
                   </div>
-                  {ranked.map((p, i) => {
-                    const c = colorOf(p.colorId);
-                    return (
-                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 16px" }}>
-                        <span style={{ width: 22, textAlign: "center", fontSize: p.rank === 0 ? "15px" : "12px", color: `${CREAM}66` }}>{p.rank === 0 ? "👑" : p.rank + 1}</span>
-                        <div style={{ width: 9, height: 9, borderRadius: "50%", background: c.accent, flexShrink: 0 }} />
-                        <span style={{ flex: 1, fontSize: "14px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
-                        <span style={{ fontSize: "11px", color: `${CREAM}55` }}>
-                          {p.canal} + {p.rail} =
-                        </span>
-                        <span style={{ fontSize: "17px", fontWeight: "bold", color: p.rank === 0 ? GOLD : `${CREAM}cc`, minWidth: 30, textAlign: "right" }}>{p.total}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
+                ))}
+              </section>
+            ))}
           </div>
 
-          <div style={{ textAlign: "center", marginTop: 24 }}>
+          <div style={{ textAlign: "center", marginTop: 26 }}>
             <button
               type="button"
               onClick={() => {
                 if (window.confirm("Delete ALL saved games? This can't be undone.")) onClear();
               }}
-              style={ghostButton({ border: "1px solid rgba(255,138,122,0.3)", color: "#ff8a7a99", fontSize: "10px", letterSpacing: "3px" })}
+              style={{ background: "none", border: "none", color: "#e0907c", fontFamily: BODY, fontStyle: "italic", fontSize: "16px", cursor: "pointer", padding: 10, textDecoration: "underline", textUnderlineOffset: 4 }}
             >
-              Clear History
+              Clear history
             </button>
           </div>
         </>
@@ -1125,7 +1098,15 @@ function HistoryScreen({ history, onBack, onDelete, onClear }) {
 
 export default function BrassBirminghamScorer() {
   const [game, setGame] = usePersistentState(GAME_KEY, emptyGame(), isValidGame, migrateGame);
+  const [history, setHistory] = usePersistentState(HISTORY_KEY, [], isValidHistory);
   const [undoStack, setUndoStack] = useState([]); // snapshots of earlier scores, newest last
+  const [screen, setScreen] = useState(() => (game.started && game.players.length >= MIN_PLAYERS ? "game" : "setup"));
+  const [setupMode, setSetupMode] = useState("new");
+  const [setupKey, setSetupKey] = useState(0); // remounts the setup form with fresh rows
+
+  useEffect(() => {
+    window.scrollTo?.(0, 0);
+  }, [screen]);
 
   // Every score change goes through commit() so it can be undone.
   const commit = (updater) => {
@@ -1144,14 +1125,6 @@ export default function BrassBirminghamScorer() {
       savedHistoryId: snap.savedHistoryId || g.savedHistoryId,
     }));
   };
-  const [history, setHistory] = usePersistentState(HISTORY_KEY, [], isValidHistory);
-  const [screen, setScreen] = useState(() => (game.started && game.players.length >= MIN_PLAYERS ? "game" : "setup"));
-  const [setupMode, setSetupMode] = useState("new");
-  const [setupKey, setSetupKey] = useState(0); // remounts the setup form with fresh rows
-
-  useEffect(() => {
-    window.scrollTo?.(0, 0);
-  }, [screen]);
 
   const recentNames = useMemo(() => {
     const seen = new Set();
@@ -1237,8 +1210,7 @@ export default function BrassBirminghamScorer() {
   }
 
   if (screen === "setup") {
-    const prefill =
-      game.players.length > 0 ? game.players.map(({ id, name, colorId }) => ({ id: setupMode === "edit" ? id : newId(), name, colorId })) : [];
+    const prefill = game.players.map(({ id, name, colorId }) => ({ id: setupMode === "edit" ? id : newId(), name, colorId }));
     return (
       <SetupScreen
         key={setupKey}
@@ -1265,7 +1237,6 @@ export default function BrassBirminghamScorer() {
       onNewGame={handleNewGame}
       onOpenHistory={() => setScreen("history")}
       onSaveGame={handleSaveGame}
-      historyCount={history.length}
     />
   );
 }

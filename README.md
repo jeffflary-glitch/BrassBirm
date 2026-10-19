@@ -23,7 +23,10 @@ To put it on your home screen: in Safari tap **Share → Add to Home Screen**; i
 | Path | What it is |
 | --- | --- |
 | `src/BrassBirminghamScorer.jsx` | The scoring sheet itself (all the game logic and layout) |
-| `src/main.jsx` | Starts the app on the page |
+| `src/theme.js` | Colors, fonts, era themes and the brass/parchment looks |
+| `src/icons.jsx` | The custom icon set (canal boat, rail track, factory, barrel, ledger, laurel…) |
+| `src/ornaments.jsx` | Wax-seal player tokens, rolling numbers and animations |
+| `src/main.jsx` | Starts the app and loads the bundled fonts |
 | `index.html` | The page shell |
 | `public/` | Home-screen icon and app manifest |
 | `docs/` | The built, ready-to-serve site that GitHub Pages publishes |
