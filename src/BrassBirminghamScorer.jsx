@@ -117,14 +117,34 @@ const isValidHistory = (h) => Array.isArray(h) && h.every((g) => g && g.id && Ar
 // Older saves stored one running number per row; turn it into a single entry.
 const toEntries = (v) => (Array.isArray(v) ? v : v > 0 ? [v] : []);
 
+// Players saved with a color the game doesn't have get the next free game color.
+function fixColors(players) {
+  const used = new Set();
+  const valid = (id) => PLAYER_COLORS.some((c) => c.id === id);
+  const keep = players.map((p) => {
+    if (valid(p.colorId) && !used.has(p.colorId)) {
+      used.add(p.colorId);
+      return p.colorId;
+    }
+    return null;
+  });
+  return players.map((p, i) => {
+    if (keep[i]) return p;
+    const free = PLAYER_COLORS.find((c) => !used.has(c.id))?.id ?? PLAYER_COLORS[0].id;
+    used.add(free);
+    return { ...p, colorId: free };
+  });
+}
+
 const migrateGame = (g) => ({
   ...g,
-  players: g.players.map((p) => ({
-    ...p,
-    colorId: PLAYER_COLORS.some((c) => c.id === p.colorId) ? p.colorId : PLAYER_COLORS[0].id,
-    canal: { ...p.canal, links: toEntries(p.canal.links), tiles: toEntries(p.canal.tiles) },
-    rail: { ...p.rail, links: toEntries(p.rail.links), tiles: toEntries(p.rail.tiles) },
-  })),
+  players: fixColors(
+    g.players.map((p) => ({
+      ...p,
+      canal: { ...p.canal, links: toEntries(p.canal.links), tiles: toEntries(p.canal.tiles) },
+      rail: { ...p.rail, links: toEntries(p.rail.links), tiles: toEntries(p.rail.tiles) },
+    }))
+  ),
 });
 
 /** Ranks players by total; tied players share a rank. */
@@ -377,7 +397,7 @@ function SetupScreen({ initialPlayers, mode, recentNames, canCancel, onCancel, o
               <div style={{ fontFamily: BODY, fontStyle: "italic", fontSize: "15px", color: "rgba(43,29,16,0.7)", marginBottom: 8 }}>
                 Seal color: {c.name.toLowerCase()}
               </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
                 {PLAYER_COLORS.map((pc) => {
                   const selected = pc.id === row.colorId;
                   const taken = takenBy[pc.id] && !selected;
@@ -401,7 +421,7 @@ function SetupScreen({ initialPlayers, mode, recentNames, canCancel, onCancel, o
                         transition: "transform 120ms",
                       }}
                     >
-                      <WaxSeal color={pc} size={32} dim={taken} />
+                      <WaxSeal color={pc} size={44} dim={taken} />
                     </button>
                   );
                 })}

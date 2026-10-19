@@ -2,7 +2,7 @@
 
 A digital scoring sheet for the board game Brass: Birmingham.
 
-- Enter each player's name and pick their color at the start (2–4 players), with recent names one tap away
+- Enter each player's name and pick their color (red, yellow, purple or white, as in the game) at the start, 2–4 players, with recent names one tap away
 - Canal Era and Rail Era scored separately, then a Final Score tab with live standings
 - Type each tile's or link's VP into the Add box (number pad on phones); every entry is listed and can be tapped to remove
 - Undo button steps back through any score change

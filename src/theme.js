@@ -48,17 +48,14 @@ export const ERA_THEME = {
   },
 };
 
+// The four player colors from the game: red, yellow, purple and white.
 // seal  = wax token fill        sealText = initial on the token
 // accent = color on dark areas  ink      = color written on parchment
 export const PLAYER_COLORS = [
   { id: "red",    name: "Red",    seal: "#a8321f", sealText: "#f6dcd2", accent: "#e0644d", ink: "#8e2a1a" },
-  { id: "blue",   name: "Blue",   seal: "#2f5d93", sealText: "#dde8f6", accent: "#6fa3dc", ink: "#244b7a" },
-  { id: "green",  name: "Green",  seal: "#3c7a4e", sealText: "#ddf0e2", accent: "#63b67e", ink: "#2d5f3c" },
   { id: "yellow", name: "Yellow", seal: "#d4ab2f", sealText: "#3a2a05", accent: "#e8c547", ink: "#76590a" },
   { id: "purple", name: "Purple", seal: "#6b3f97", sealText: "#ece0f7", accent: "#a77ad9", ink: "#57317d" },
-  { id: "teal",   name: "Teal",   seal: "#2c8580", sealText: "#daf3f1", accent: "#4fc0b8", ink: "#1e605c" },
   { id: "white",  name: "White",  seal: "#e6dfd0", sealText: "#4a443a", accent: "#ece6d8", ink: "#5d574b" },
-  { id: "black",  name: "Black",  seal: "#2b2724", sealText: "#e6dccb", accent: "#b3ab9f", ink: "#1d1b19" },
 ];
 
 export const colorOf = (colorId) => PLAYER_COLORS.find((c) => c.id === colorId) ?? PLAYER_COLORS[0];
