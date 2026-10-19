@@ -38,7 +38,10 @@ const HISTORY_KEY = "brass.history.v1";
 
 const newId = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
-const defaultEra = () => ({ links: 0, tiles: 0, merchantBonuses: [] });
+// links / tiles are lists of individual VP entries, e.g. tiles: [9, 4, 6]
+const defaultEra = () => ({ links: [], tiles: [], merchantBonuses: [] });
+
+const MAX_UNDO = 100;
 
 const emptyGame = () => ({
   started: false,
@@ -47,9 +50,11 @@ const emptyGame = () => ({
   savedHistoryId: null,
 });
 
+const sum = (list) => list.reduce((s, n) => s + n, 0);
+
 const eraVP = (era) =>
-  era.links +
-  era.tiles +
+  sum(era.links) +
+  sum(era.tiles) +
   era.merchantBonuses.reduce(
     (s, id) => s + (MERCHANT_BONUSES.find((b) => b.id === id)?.vp ?? 0),
     0
@@ -60,12 +65,12 @@ const totalVP = (p) => eraVP(p.canal) + eraVP(p.rail);
 const hasAnyScore = (players) =>
   players.some((p) => totalVP(p) > 0);
 
-function loadJSON(key, fallback, isValid) {
+function loadJSON(key, fallback, isValid, migrate = (x) => x) {
   try {
     const raw = window.localStorage.getItem(key);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw);
-    return isValid(parsed) ? parsed : fallback;
+    return isValid(parsed) ? migrate(parsed) : fallback;
   } catch {
     return fallback;
   }
@@ -79,16 +84,31 @@ function saveJSON(key, value) {
   }
 }
 
-function usePersistentState(key, fallback, isValid) {
-  const [value, setValue] = useState(() => loadJSON(key, fallback, isValid));
+function usePersistentState(key, fallback, isValid, migrate) {
+  const [value, setValue] = useState(() => loadJSON(key, fallback, isValid, migrate));
   useEffect(() => {
     saveJSON(key, value);
   }, [key, value]);
   return [value, setValue];
 }
 
+// Accepts both the current list format and the older single-number format.
+const isValidEntries = (v) => Number.isFinite(v) || (Array.isArray(v) && v.every(Number.isFinite));
+
 const isValidEra = (e) =>
-  e && Number.isFinite(e.links) && Number.isFinite(e.tiles) && Array.isArray(e.merchantBonuses);
+  e && isValidEntries(e.links) && isValidEntries(e.tiles) && Array.isArray(e.merchantBonuses);
+
+// Older saves stored one running number per row; turn it into a single entry.
+const toEntries = (v) => (Array.isArray(v) ? v : v > 0 ? [v] : []);
+
+const migrateGame = (g) => ({
+  ...g,
+  players: g.players.map((p) => ({
+    ...p,
+    canal: { ...p.canal, links: toEntries(p.canal.links), tiles: toEntries(p.canal.tiles) },
+    rail: { ...p.rail, links: toEntries(p.rail.links), tiles: toEntries(p.rail.tiles) },
+  })),
+});
 
 const isValidGame = (g) =>
   g &&
@@ -458,68 +478,85 @@ function SetupScreen({ initialPlayers, mode, recentNames, canCancel, onCancel, o
 
 /* ─────────────────────────── Score inputs ─────────────────────────── */
 
-function ScoreRow({ label, sublabel, value, onChange, color }) {
-  const [draft, setDraft] = useState(null);
-  const set = (v) => onChange(Math.max(0, Math.min(999, v)));
+function AddRow({ label, sublabel, entries, onAdd, onRemoveAt, color }) {
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef(null);
+  const rowTotal = sum(entries);
 
-  const btn = (extra = {}) => ({
-    height: 40,
-    background: `${color.accent}22`,
-    border: `1px solid ${color.accent}55`,
-    color: color.accent,
-    fontSize: "20px",
-    lineHeight: 1,
-    cursor: "pointer",
-    fontFamily: FONT,
-    padding: 0,
-    ...extra,
-  });
+  const submit = () => {
+    const n = parseInt(draft, 10);
+    if (!Number.isFinite(n) || n <= 0) return;
+    onAdd(n);
+    setDraft("");
+    inputRef.current?.focus(); // keep the number pad open for the next tile
+  };
 
   return (
     <div style={{ padding: "12px 14px", borderBottom: `1px solid ${color.accent}18` }}>
-      <div style={{ fontSize: "14px", color: CREAM }}>{label}</div>
-      {sublabel && <div style={{ fontSize: "11px", color: `${CREAM}66`, marginTop: 2 }}>{sublabel}</div>}
-      <div style={{ display: "flex", alignItems: "center", marginTop: 10 }}>
-        <button
-          type="button"
-          aria-label={`${label} minus 1`}
-          onClick={() => set(value - 1)}
-          disabled={value <= 0}
-          style={btn({
-            width: 44,
-            borderRadius: "4px 0 0 4px",
-            opacity: value <= 0 ? 0.3 : 1,
-            cursor: value <= 0 ? "default" : "pointer",
-          })}
-        >
-          −
-        </button>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: "14px", color: CREAM }}>{label}</div>
+          {sublabel && <div style={{ fontSize: "11px", color: `${CREAM}66`, marginTop: 2 }}>{sublabel}</div>}
+        </div>
+        <div style={{ fontSize: "20px", fontWeight: "bold", color: color.accent, whiteSpace: "nowrap" }}>
+          {rowTotal}
+          <span style={{ fontSize: "11px", fontWeight: "normal", marginLeft: 3, opacity: 0.7 }}>VP</span>
+        </div>
+      </div>
+
+      {entries.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+          {entries.map((n, i) => (
+            <button
+              key={i}
+              type="button"
+              aria-label={`Remove ${n} from ${label}`}
+              onClick={() => onRemoveAt(i)}
+              style={{
+                padding: "4px 8px",
+                background: `${color.accent}1a`,
+                border: `1px solid ${color.accent}44`,
+                borderRadius: 12,
+                color: color.accent,
+                fontFamily: FONT,
+                fontSize: "13px",
+                cursor: "pointer",
+                lineHeight: 1.2,
+              }}
+            >
+              +{n}
+              <span style={{ marginLeft: 5, opacity: 0.5, fontSize: "11px" }}>×</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+        style={{ display: "flex", gap: 8, marginTop: 10 }}
+      >
         <input
+          ref={inputRef}
           type="text"
           inputMode="numeric"
           pattern="[0-9]*"
-          aria-label={label}
-          value={draft ?? String(value)}
-          placeholder={String(value)}
-          onFocus={() => setDraft("")}
-          onChange={(e) => {
-            const digits = e.target.value.replace(/\D/g, "").slice(0, 3);
-            setDraft(digits);
-            if (digits !== "") set(parseInt(digits, 10));
-          }}
-          onBlur={() => setDraft(null)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") e.currentTarget.blur();
-          }}
+          enterKeyHint="enter"
+          autoComplete="off"
+          aria-label={`Add to ${label}`}
+          placeholder="Add VP"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value.replace(/\D/g, "").slice(0, 3))}
           style={{
-            width: 64,
-            height: 40,
+            flex: 1,
+            minWidth: 0,
+            height: 44,
             textAlign: "center",
-            background: `${color.accent}11`,
-            border: `1px solid ${color.accent}33`,
-            borderLeft: "none",
-            borderRight: "none",
-            borderRadius: 0,
+            background: "rgba(0,0,0,0.35)",
+            border: `1px solid ${color.accent}55`,
+            borderRadius: 4,
             fontSize: "20px",
             fontWeight: "bold",
             color: color.accent,
@@ -528,18 +565,30 @@ function ScoreRow({ label, sublabel, value, onChange, color }) {
             padding: 0,
           }}
         />
-        <button type="button" aria-label={`${label} plus 1`} onClick={() => set(value + 1)} style={btn({ width: 44, borderRadius: "0 4px 4px 0" })}>
-          +
-        </button>
         <button
-          type="button"
-          aria-label={`${label} plus 5`}
-          onClick={() => set(value + 5)}
-          style={btn({ width: 52, marginLeft: 8, borderRadius: 4, fontSize: "15px", fontWeight: "bold" })}
+          type="submit"
+          disabled={!draft}
+          // Stop the tap from closing the keyboard before the number is added.
+          onPointerDown={(e) => e.preventDefault()}
+          onMouseDown={(e) => e.preventDefault()}
+          style={{
+            width: 76,
+            height: 44,
+            background: draft ? `${color.accent}33` : "transparent",
+            border: `1px solid ${color.accent}${draft ? "88" : "33"}`,
+            borderRadius: 4,
+            color: draft ? color.accent : `${color.accent}55`,
+            fontFamily: FONT,
+            fontSize: "13px",
+            letterSpacing: "2px",
+            textTransform: "uppercase",
+            fontWeight: "bold",
+            cursor: draft ? "pointer" : "default",
+          }}
         >
-          +5
+          Add
         </button>
-      </div>
+      </form>
     </div>
   );
 }
@@ -614,18 +663,20 @@ function EraScoreCard({ player, era, color, claimedBy, playersById, onUpdateEra 
         <span style={{ fontSize: "11px", letterSpacing: "2px", textTransform: "uppercase", color: `${color.accent}cc` }}>{PHASE_LABELS[era]}</span>
         <span style={{ fontSize: "16px", fontWeight: "bold", color: color.accent }}>{eraVP(eraData)} VP</span>
       </div>
-      <ScoreRow
+      <AddRow
         label={era === "canal" ? "⛓ Canal Links" : "⛓ Rail Links"}
-        sublabel="1 VP per connection symbol on adjacent hexes"
-        value={eraData.links}
-        onChange={(v) => update("links", v)}
+        sublabel="Add each link's VP (connection symbols at both ends)"
+        entries={eraData.links}
+        onAdd={(n) => update("links", [...eraData.links, n])}
+        onRemoveAt={(i) => update("links", eraData.links.filter((_, j) => j !== i))}
         color={color}
       />
-      <ScoreRow
+      <AddRow
         label="🏭 Industry Tiles"
-        sublabel="VP shown on each flipped tile"
-        value={eraData.tiles}
-        onChange={(v) => update("tiles", v)}
+        sublabel="Add the VP shown on each flipped tile"
+        entries={eraData.tiles}
+        onAdd={(n) => update("tiles", [...eraData.tiles, n])}
+        onRemoveAt={(i) => update("tiles", eraData.tiles.filter((_, j) => j !== i))}
         color={color}
       />
       <MerchantBonuses
@@ -767,7 +818,7 @@ function SavePanel({ saved, onSave, onRematch, onNewGame }) {
   );
 }
 
-function GameScreen({ game, setGame, onEditPlayers, onNewGame, onOpenHistory, onSaveGame, historyCount }) {
+function GameScreen({ game, setGame, commit, onUndo, canUndo, onEditPlayers, onNewGame, onOpenHistory, onSaveGame, historyCount }) {
   const { players, phase } = game;
   const playersById = useMemo(() => Object.fromEntries(players.map((p) => [p.id, p])), [players]);
 
@@ -784,11 +835,11 @@ function GameScreen({ game, setGame, onEditPlayers, onNewGame, onOpenHistory, on
   const setPhase = (ph) => setGame((g) => ({ ...g, phase: ph }));
 
   const updateEra = (playerId, era, eraData) =>
-    setGame((g) => ({ ...g, players: g.players.map((p) => (p.id === playerId ? { ...p, [era]: eraData } : p)) }));
+    commit((g) => ({ ...g, players: g.players.map((p) => (p.id === playerId ? { ...p, [era]: eraData } : p)) }));
 
   const clearScores = () => {
     if (!window.confirm("Clear all scores for this game? Players stay the same.")) return;
-    setGame((g) => ({
+    commit((g) => ({
       ...g,
       phase: "canal",
       savedHistoryId: null,
@@ -797,7 +848,7 @@ function GameScreen({ game, setGame, onEditPlayers, onNewGame, onOpenHistory, on
   };
 
   const rematch = () =>
-    setGame((g) => ({
+    commit((g) => ({
       ...g,
       phase: "canal",
       savedHistoryId: null,
@@ -819,20 +870,30 @@ function GameScreen({ game, setGame, onEditPlayers, onNewGame, onOpenHistory, on
         </button>
       </div>
 
-      {/* Phase tabs */}
+      {/* Phase tabs + undo, pinned while scrolling */}
       <div
         style={{
           display: "flex",
-          background: "rgba(0,0,0,0.5)",
-          border: "1px solid rgba(201,168,76,0.3)",
-          borderRadius: 4,
-          overflow: "hidden",
+          gap: 8,
           marginBottom: 18,
           position: "sticky",
           top: 0,
           zIndex: 5,
+          padding: "6px 0",
+          background: "rgba(13,10,6,0.92)",
           backdropFilter: "blur(6px)",
           WebkitBackdropFilter: "blur(6px)",
+        }}
+      >
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          minWidth: 0,
+          background: "rgba(0,0,0,0.5)",
+          border: "1px solid rgba(201,168,76,0.3)",
+          borderRadius: 4,
+          overflow: "hidden",
         }}
       >
         {["canal", "rail", "final"].map((ph) => (
@@ -842,15 +903,15 @@ function GameScreen({ game, setGame, onEditPlayers, onNewGame, onOpenHistory, on
             onClick={() => setPhase(ph)}
             style={{
               flex: 1,
-              padding: "13px 6px",
+              padding: "13px 4px",
               background: phase === ph ? "linear-gradient(135deg, #c9a84c22, #c9a84c44)" : "rgba(13,10,6,0.85)",
               border: "none",
               borderRight: ph !== "final" ? "1px solid rgba(201,168,76,0.2)" : "none",
               borderBottom: phase === ph ? "2px solid #c9a84c" : "2px solid transparent",
               color: phase === ph ? GOLD : `${CREAM}88`,
               fontFamily: FONT,
-              fontSize: "11px",
-              letterSpacing: "2px",
+              fontSize: "10px",
+              letterSpacing: "1.5px",
               textTransform: "uppercase",
               cursor: "pointer",
             }}
@@ -858,6 +919,23 @@ function GameScreen({ game, setGame, onEditPlayers, onNewGame, onOpenHistory, on
             {PHASE_LABELS[ph]}
           </button>
         ))}
+      </div>
+      <button
+        type="button"
+        onClick={onUndo}
+        disabled={!canUndo}
+        aria-label="Undo"
+        style={ghostButton({
+          padding: "0 10px",
+          minWidth: 64,
+          fontSize: "11px",
+          letterSpacing: "1px",
+          opacity: canUndo ? 1 : 0.35,
+          cursor: canUndo ? "pointer" : "default",
+        })}
+      >
+        ↶ Undo
+      </button>
       </div>
 
       {/* Player cards: one per row on phones, two per row on wider screens */}
@@ -1046,7 +1124,26 @@ function HistoryScreen({ history, onBack, onDelete, onClear }) {
 /* ─────────────────────────── App ─────────────────────────── */
 
 export default function BrassBirminghamScorer() {
-  const [game, setGame] = usePersistentState(GAME_KEY, emptyGame(), isValidGame);
+  const [game, setGame] = usePersistentState(GAME_KEY, emptyGame(), isValidGame, migrateGame);
+  const [undoStack, setUndoStack] = useState([]); // snapshots of earlier scores, newest last
+
+  // Every score change goes through commit() so it can be undone.
+  const commit = (updater) => {
+    setUndoStack((st) => [...st.slice(-(MAX_UNDO - 1)), { players: game.players, savedHistoryId: game.savedHistoryId }]);
+    setGame(updater);
+  };
+
+  const undo = () => {
+    if (!undoStack.length) return;
+    const snap = undoStack[undoStack.length - 1];
+    setUndoStack((st) => st.slice(0, -1));
+    setGame((g) => ({
+      ...g,
+      players: snap.players,
+      // keep the link to a saved game even if the snapshot predates saving
+      savedHistoryId: snap.savedHistoryId || g.savedHistoryId,
+    }));
+  };
   const [history, setHistory] = usePersistentState(HISTORY_KEY, [], isValidHistory);
   const [screen, setScreen] = useState(() => (game.started && game.players.length >= MIN_PLAYERS ? "game" : "setup"));
   const [setupMode, setSetupMode] = useState("new");
@@ -1107,6 +1204,7 @@ export default function BrassBirminghamScorer() {
         players: rows.map((r) => ({ id: r.id, name: r.name, colorId: r.colorId, canal: defaultEra(), rail: defaultEra() })),
       });
     }
+    setUndoStack([]);
     setScreen("game");
   };
 
@@ -1160,6 +1258,9 @@ export default function BrassBirminghamScorer() {
     <GameScreen
       game={game}
       setGame={setGame}
+      commit={commit}
+      onUndo={undo}
+      canUndo={undoStack.length > 0}
       onEditPlayers={() => openSetup("edit")}
       onNewGame={handleNewGame}
       onOpenHistory={() => setScreen("history")}
