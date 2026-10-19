@@ -1,6 +1,13 @@
 # Brass Scoring
 
-A digital scoring sheet for the board game Brass: Birmingham. Supports 2–4 color-coded players, with Canal Era and Rail Era scored separately and a final standings view.
+A digital scoring sheet for the board game Brass: Birmingham.
+
+- Enter each player's name and pick their color at the start (2–4 players), with recent names one tap away
+- Canal Era and Rail Era scored separately, then a Final Score tab with live standings
+- Tap a score to type it, or use −, + and +5 buttons
+- Each merchant beer bonus can only be claimed by one player per era
+- Scores are kept on your phone, so a reload or locked screen doesn't lose the game
+- Finish & save games to History, with a win tally for each player
 
 ## Use it
 
