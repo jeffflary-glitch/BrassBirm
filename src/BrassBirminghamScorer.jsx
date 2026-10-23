@@ -229,7 +229,15 @@ function BrassButton({ children, onClick, disabled, style }) {
 
 function Header({ compact }) {
   return (
-    <header style={{ textAlign: "center", padding: compact ? "18px 16px 8px" : "40px 16px 18px" }}>
+    <header
+      style={{
+        textAlign: "center",
+        // Clear the iOS status bar, which overlaps the page because of black-translucent + viewport-fit=cover
+        padding: compact
+          ? "calc(env(safe-area-inset-top) + 18px) 16px 8px"
+          : "calc(env(safe-area-inset-top) + 40px) 16px 18px",
+      }}
+    >
       <h1
         style={{
           fontFamily: DISPLAY,
