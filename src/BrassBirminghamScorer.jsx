@@ -228,9 +228,40 @@ function BrassButton({ children, onClick, disabled, style }) {
 }
 
 function Header({ compact }) {
+  const ref = useRef(null);
+  const [scrolled, setScrolled] = useState(false);
+
+  // Publish the header's height so other sticky bars can park just below it.
+  useEffect(() => {
+    const el = ref.current;
+    const root = document.documentElement;
+    const publish = () => root.style.setProperty("--header-h", `${el.offsetHeight}px`);
+    publish();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(publish) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, []);
+
+  // Only show the backdrop once content is scrolling behind the header.
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 0);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
   return (
     <header
+      ref={ref}
       style={{
+        position: "sticky",
+        top: 0,
+        zIndex: 10,
+        background: scrolled ? "rgba(17,12,8,0.94)" : "transparent",
+        backdropFilter: scrolled ? "blur(8px)" : "none",
+        WebkitBackdropFilter: scrolled ? "blur(8px)" : "none",
+        boxShadow: scrolled ? "inset 0 -1px 0 rgba(201,162,74,0.32)" : "none",
+        transition: "background 200ms ease, box-shadow 200ms ease",
         textAlign: "center",
         // Clear the iOS status bar, which overlaps the page because of black-translucent + viewport-fit=cover
         padding: compact
@@ -924,7 +955,7 @@ function GameScreen({ game, setGame, commit, onUndo, canUndo, onEditPlayers, onN
           display: "flex",
           gap: 8,
           position: "sticky",
-          top: 0,
+          top: "var(--header-h, 0px)",
           zIndex: 5,
           padding: "8px 14px",
           margin: "0 -14px 12px",

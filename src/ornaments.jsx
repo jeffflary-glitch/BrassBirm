@@ -127,6 +127,8 @@ export function GlobalStyles() {
   return (
     <style>{`
       html, body { background: #110c08; }
+      /* Keep focused inputs clear of the sticky header and era tabs */
+      html { scroll-padding-top: calc(var(--header-h, 0px) + 64px); }
       body { -webkit-tap-highlight-color: transparent; font-variant-numeric: lining-nums; }
       button, input { font-variant-numeric: lining-nums; }
       button { -webkit-tap-highlight-color: transparent; }
