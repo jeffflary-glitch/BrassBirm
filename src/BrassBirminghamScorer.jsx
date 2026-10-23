@@ -237,9 +237,17 @@ function Header({ compact }) {
     const root = document.documentElement;
     const publish = () => root.style.setProperty("--header-h", `${el.offsetHeight}px`);
     publish();
+    // Watch the border box: iOS home-screen apps apply the safe-area padding after load,
+    // which doesn't change the content box.
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(publish) : null;
-    ro?.observe(el);
-    return () => ro?.disconnect();
+    ro?.observe(el, { box: "border-box" });
+    window.addEventListener("resize", publish);
+    window.addEventListener("orientationchange", publish);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", publish);
+      window.removeEventListener("orientationchange", publish);
+    };
   }, []);
 
   // Only show the backdrop once content is scrolling behind the header.
